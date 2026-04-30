@@ -1,36 +1,50 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Delegat Transport Stockholm (MVP)
 
-## Getting Started
+MVP for koordinering av delegattransporter med tre roller:
+- `volunteer` (chauffor)
+- `admin`
+- `airport` (flygplatsteam)
 
-First, run the development server:
+## Starta lokalt
 
 ```bash
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Oppna `http://localhost:3000`.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Demo-inloggning
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+- Admin: `admin` / `2468`
+- Airport team: `airport` / `1357`
+- Volontar: `1` / `1001` (upp till 300 forkonfigurerade volontarer)
 
-## Learn More
+## Funktioner i MVP
 
-To learn more about Next.js, take a look at the following resources:
+- ID + PIN-inloggning utan e-post/namn.
+- Admin kan skapa akuta/planerade korningar.
+- Admin valjer fordonstyp per korning: bil, minibuss eller buss.
+- Volontarer svarar ja/nej med ETA i minuter.
+- Automatisk tilldelning (kortast ETA inom 2 minuter fran publicering).
+- Sateskontroll mellan behov och volontarbil.
+- Airport/admin kan skicka driftnotiser.
+- Schema visar bokade/klarade korningar med status.
+- Admin kan importera volontarer via CSV i UI.
+- UI ar uppdaterad till mork mobil-forst design for snabb drift.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Datalagring
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+Data sparas server-side i SQLite: `data/transport.db`.
 
-## Deploy on Vercel
+Sessioner lagras persistenta i databasen.
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## CSV-format for import
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+En rad per volontar:
+
+`volontarnummer,PIN,saten`
+
+Exempel:
+
+`301,1301,4`
