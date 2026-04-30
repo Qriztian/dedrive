@@ -14,6 +14,7 @@ import {
 import type { BusRoute, Drive, DriveType, Notification, Role, VehicleType } from "@/lib/types";
 
 type User = { id: string; role: Role };
+type HealthInfo = { appVersion: string; startedAt: string; checkedAt: string };
 const ETA_OPTIONS = [5, 10, 15, 20, 25, 30, 40, 50, 60];
 const VEHICLE_LABELS: Record<VehicleType, string> = {
   car: "Bil",
@@ -88,8 +89,10 @@ export default function Home() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [pushEnabled, setPushEnabled] = useState(false);
   const [pushStatusText, setPushStatusText] = useState<string | null>(null);
+  const [health, setHealth] = useState<HealthInfo | null>(null);
   const pullStartYRef = useRef<number | null>(null);
   const pullTriggeredRef = useRef(false);
+  const isRefreshingRef = useRef(false);
 
   const api = useCallback(async <T,>(path: string, init?: RequestInit): Promise<T> => {
     const response = await fetch(path, {
@@ -123,15 +126,17 @@ export default function Home() {
     setBusRoutes(data.busRoutes);
   }, [token, api]);
 
-  const refreshSafe = useCallback(async () => {
-    if (!token || isRefreshing) return;
-    setIsRefreshing(true);
+  const refreshSafe = useCallback(async (showSpinner = false) => {
+    if (!token || isRefreshingRef.current) return;
+    isRefreshingRef.current = true;
+    if (showSpinner) setIsRefreshing(true);
     try {
       await refresh();
     } finally {
-      setIsRefreshing(false);
+      isRefreshingRef.current = false;
+      if (showSpinner) setIsRefreshing(false);
     }
-  }, [token, isRefreshing, refresh]);
+  }, [token, refresh]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -145,16 +150,36 @@ export default function Home() {
   useEffect(() => {
     if (!token) return;
     const first = setTimeout(() => {
-      refreshSafe().catch(() => undefined);
+      refreshSafe(false).catch(() => undefined);
     }, 0);
     const interval = setInterval(() => {
-      refreshSafe().catch(() => undefined);
+      refreshSafe(false).catch(() => undefined);
     }, 5000);
     return () => {
       clearTimeout(first);
       clearInterval(interval);
     };
   }, [token, refreshSafe]);
+
+  useEffect(() => {
+    if (!token) {
+      const t0 = setTimeout(() => setHealth(null), 0);
+      return () => clearTimeout(t0);
+    }
+    const fetchHealth = () => {
+      fetch("/api/health")
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data) => {
+          if (data && data.appVersion && data.startedAt && data.checkedAt) {
+            setHealth(data as HealthInfo);
+          }
+        })
+        .catch(() => undefined);
+    };
+    fetchHealth();
+    const t = setInterval(fetchHealth, 30000);
+    return () => clearInterval(t);
+  }, [token]);
 
   useEffect(() => {
     if (!token) {
@@ -184,7 +209,7 @@ export default function Home() {
       const y = event.touches[0]?.clientY ?? pullStartYRef.current;
       if (y - pullStartYRef.current > 85) {
         pullTriggeredRef.current = true;
-        refreshSafe().catch(() => undefined);
+        refreshSafe(true).catch(() => undefined);
       }
     };
     const onTouchEnd = () => {
@@ -228,7 +253,7 @@ export default function Home() {
       });
       setToken(data.token);
       setUser(data.user);
-      await refreshSafe();
+      await refreshSafe(true);
     } catch (error) {
       setLoginError(error instanceof Error ? error.message : "Fel ID eller PIN.");
     }
@@ -250,7 +275,7 @@ export default function Home() {
       type: "emergency",
       vehicleType: "car",
     });
-    await refreshSafe();
+    await refreshSafe(true);
   }
 
   async function volunteerOfferDrive(driveId: string, etaMinutes?: number) {
@@ -258,17 +283,17 @@ export default function Home() {
       method: "POST",
       body: JSON.stringify(etaMinutes ? { etaMinutes } : {}),
     });
-    await refreshSafe();
+    await refreshSafe(true);
   }
 
   async function volunteerDeclineDrive(driveId: string) {
     await api(`/api/drives/${driveId}/decline`, { method: "POST" });
-    await refreshSafe();
+    await refreshSafe(true);
   }
 
   async function markDriveDone(driveId: string) {
     await api(`/api/drives/${driveId}/done`, { method: "POST" });
-    await refreshSafe();
+    await refreshSafe(true);
   }
 
   async function sendMessage(event: FormEvent<HTMLFormElement>) {
@@ -284,7 +309,7 @@ export default function Home() {
       targetVolunteerId: "",
       driveId: "",
     });
-    await refreshSafe();
+    await refreshSafe(true);
   }
 
   async function importVolunteers(event: FormEvent<HTMLFormElement>) {
@@ -304,7 +329,7 @@ export default function Home() {
         tone: "ok",
         text: `CSV: ${data.importedVolunteers ?? 0} volontärer importerade (befintliga uppdateras).`,
       });
-      await refreshSafe();
+      await refreshSafe(true);
     } catch (e) {
       setVolunteerImportNote({
         tone: "err",
@@ -339,7 +364,7 @@ export default function Home() {
         tone: "ok",
         text: `Excel: ${data.importedVolunteers ?? 0} volontärer importerade (befintliga uppdateras vid samma id).`,
       });
-      await refreshSafe();
+      await refreshSafe(true);
     } catch (e) {
       setVolunteerImportNote({
         tone: "err",
@@ -385,7 +410,7 @@ export default function Home() {
       body: JSON.stringify({ csv: importBusCsv }),
     });
     setImportBusCsv("");
-    await refreshSafe();
+    await refreshSafe(true);
   }
 
   async function enablePushNotifications() {
@@ -394,9 +419,11 @@ export default function Home() {
       setPushStatusText("Push stöds inte i den här webbläsaren.");
       return;
     }
-    const vapidKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
+    const vapidRes = await fetch("/api/push/public-key");
+    const vapidData = (await vapidRes.json().catch(() => ({}))) as { publicKey?: string };
+    const vapidKey = vapidData.publicKey?.trim() ?? "";
     if (!vapidKey) {
-      setPushStatusText("Push-nyckel saknas i servermiljön.");
+      setPushStatusText("Push är inte konfigurerat på servern ännu (saknar VAPID-nyckel).");
       return;
     }
     try {
@@ -522,6 +549,7 @@ export default function Home() {
               setMySeats(null);
               setBusRoutes([]);
               setIsRefreshing(false);
+              isRefreshingRef.current = false;
             }}
           >
             Logga ut
@@ -549,10 +577,11 @@ export default function Home() {
           <p className="text-xs text-zinc-500">Inloggad som {user.role} ({user.id})</p>
           <button
             type="button"
-            onClick={() => refreshSafe().catch(() => undefined)}
+            onClick={() => refreshSafe(true).catch(() => undefined)}
+            disabled={isRefreshing}
             className="rounded-md border border-zinc-700 bg-zinc-900 px-2 py-1 text-xs text-zinc-200"
           >
-            {isRefreshing ? "Uppdaterar..." : "Uppdatera nu"}
+            Uppdatera nu
           </button>
           <p className="text-[11px] text-zinc-600">Dra nedåt för snabb uppdatering på mobil.</p>
           <button
@@ -569,6 +598,12 @@ export default function Home() {
           </button>
         </div>
         {pushStatusText ? <p className="mt-1 text-xs text-zinc-500">{pushStatusText}</p> : null}
+        {health ? (
+          <p className="mt-1 text-[11px] text-zinc-600">
+            Version {health.appVersion} | Server start: {formatWhen(health.startedAt)} | Health:
+            {formatWhen(health.checkedAt)}
+          </p>
+        ) : null}
       </header>
 
       <section className="mb-4 rounded-2xl border border-zinc-800 bg-zinc-950/70 p-4">
@@ -1011,6 +1046,19 @@ export default function Home() {
               <p className="text-sm text-zinc-500">Inget bokat ännu.</p>
             ) : (
               assignedDrives.map((drive) => {
+                const neededMs = new Date(drive.neededAt).getTime();
+                const drivePhaseLabel =
+                  drive.status === "done"
+                    ? "Klar"
+                    : Number.isFinite(neededMs) && matchClockMs >= neededMs
+                      ? "Kör nu"
+                      : "Bokad";
+                const drivePhaseClass =
+                  drivePhaseLabel === "Kör nu"
+                    ? "border-amber-700/60 bg-amber-500/20 text-amber-100"
+                    : drivePhaseLabel === "Klar"
+                      ? "border-emerald-700/60 bg-emerald-500/20 text-emerald-100"
+                      : "border-cyan-700/60 bg-cyan-500/20 text-cyan-100";
                 const isMyConfirmedDrive =
                   user.role === "volunteer" &&
                   drive.status === "assigned" &&
@@ -1037,6 +1085,9 @@ export default function Home() {
                     {drive.id}
                     <span className="rounded-full border border-cyan-700/50 bg-cyan-500/15 px-2 py-0.5 text-cyan-300">
                       {VEHICLE_LABELS[drive.vehicleType]}
+                    </span>
+                    <span className={`rounded-full border px-2 py-0.5 ${drivePhaseClass}`}>
+                      {drivePhaseLabel}
                     </span>
                   </p>
                   <p className="text-sm text-zinc-100">

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
-import { clearDriveLiveLocation, readState, writeState } from "@/lib/store";
+import { addNotification, clearDriveLiveLocation, readState, writeState } from "@/lib/store";
 
 function tokenFromRequest(req: NextRequest): string | null {
   const auth = req.headers.get("authorization");
@@ -18,12 +18,30 @@ export async function POST(
   }
   const { id } = await params;
   const state = await readState();
-  const next = {
+  const drive = state.drives.find((d) => d.id === id);
+  if (!drive) {
+    return NextResponse.json({ error: "Körning hittades inte." }, { status: 404 });
+  }
+  let next = {
     ...state,
-    drives: state.drives.map((drive) =>
-      drive.id === id ? { ...drive, status: "done" as const } : drive,
-    ),
+    // Arkivera direkt när den markeras klar.
+    drives: state.drives.filter((d) => d.id !== id),
   };
+  next = addNotification(next, {
+    message: `Körning ${id} markerad klar och arkiverad.`,
+    senderRole: "admin",
+    targetRole: "admin",
+    driveId: id,
+  });
+  if (drive.assignedVolunteerId) {
+    next = addNotification(next, {
+      message: `Körning ${id} är klar. Tack för insatsen!`,
+      senderRole: "admin",
+      targetRole: "volunteer",
+      targetVolunteerId: drive.assignedVolunteerId,
+      driveId: id,
+    });
+  }
   await writeState(next);
   clearDriveLiveLocation(id);
   return NextResponse.json({ ok: true });

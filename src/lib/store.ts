@@ -10,9 +10,10 @@ import {
   VehicleType,
 } from "@/lib/types";
 
-const OPEN_DRIVE_EXPIRE_AFTER_NEEDED_MS = 6 * 60 * 60 * 1000;
+const OPEN_DRIVE_EXPIRE_AFTER_NEEDED_MS = 90 * 60 * 1000;
 const ASSIGNED_DRIVE_EXPIRE_AFTER_NEEDED_MS = 2 * 60 * 60 * 1000;
 const DONE_DRIVE_EXPIRE_AFTER_NEEDED_MS = 12 * 60 * 60 * 1000;
+const NOTIFICATION_EXPIRE_MS = 24 * 60 * 60 * 1000;
 
 type DriveRow = {
   id: string;
@@ -213,6 +214,17 @@ export function pruneExpiredDrives(state: AppState): { next: AppState; changed: 
   return { next: { ...state, drives: keep }, changed: true };
 }
 
+export function pruneOldNotifications(state: AppState): { next: AppState; changed: boolean } {
+  const now = Date.now();
+  const keep = state.notifications.filter((n) => {
+    const createdMs = new Date(n.createdAt).getTime();
+    if (!Number.isFinite(createdMs)) return false;
+    return now - createdMs < NOTIFICATION_EXPIRE_MS;
+  });
+  if (keep.length === state.notifications.length) return { next: state, changed: false };
+  return { next: { ...state, notifications: keep }, changed: true };
+}
+
 /**
  * När 2 min passerat från publicering: tilldela den med kortast ETA bland anbud inom fönstret.
  * Körs idempotent vid varje läsning / efter nya anbud.
@@ -270,6 +282,10 @@ export async function readStateResolved(): Promise<AppState> {
   current = pruned.next;
   changed = changed || pruned.changed;
 
+  const prunedNotifications = pruneOldNotifications(current);
+  current = prunedNotifications.next;
+  changed = changed || prunedNotifications.changed;
+
   if (changed) await writeState(current);
   return current;
 }
@@ -299,6 +315,11 @@ export function visibleNotifications(
 ): Notification[] {
   return state.notifications
     .filter((n) => {
+      if (n.driveId) {
+        const linkedDrive = state.drives.find((d) => d.id === n.driveId);
+        // Dölj körningsnotiser så fort ärendet inte längre är öppet.
+        if (!linkedDrive || linkedDrive.status !== "open") return false;
+      }
       if (n.targetRole === "all") return true;
       if (n.targetRole === role) return true;
       if (role === "volunteer" && n.targetVolunteerId === id) return true;
