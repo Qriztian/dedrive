@@ -472,22 +472,23 @@ export default function Home() {
       }
     }
 
-    // Prefer key baked in at `npm run build` (Next inlines NEXT_PUBLIC_*). Safari is picky;
-    // JSON/fetch can theoretically differ from bundle; Chrome often still works.
-    const buildKey = stripVapidPublicKeyDecorators(process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY ?? "");
-    let vapidKey = decodeVapidPublicKeyBytes(buildKey) ? buildKey : "";
-    if (!vapidKey) {
+    // Same source as `curl …/public-key` (text/plain). Build-inlined NEXT_PUBLIC_* can be stale or
+    // behave oddly in WebKit after deploys; API is always current.
+    let vapidKey = "";
+    const vapidRes = await fetch("/api/push/public-key", {
+      cache: "no-store",
+      headers: { Accept: "text/plain" },
+    });
+    const text = vapidRes.ok ? await vapidRes.text().catch(() => "") : "";
+    vapidKey = stripVapidPublicKeyDecorators(text);
+    if (!decodeVapidPublicKeyBytes(vapidKey)) {
       vapidKey = stripVapidPublicKeyDecorators(vapidPublicKeyRef.current ?? "");
     }
-    if (!vapidKey) {
-      const vapidRes = await fetch("/api/push/public-key", {
-        cache: "no-store",
-        headers: { Accept: "text/plain" },
-      });
-      const text = vapidRes.ok ? await vapidRes.text().catch(() => "") : "";
-      vapidKey = stripVapidPublicKeyDecorators(text);
-      if (decodeVapidPublicKeyBytes(vapidKey)) vapidPublicKeyRef.current = vapidKey;
+    if (!decodeVapidPublicKeyBytes(vapidKey)) {
+      const buildKey = stripVapidPublicKeyDecorators(process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY ?? "");
+      if (decodeVapidPublicKeyBytes(buildKey)) vapidKey = buildKey;
     }
+    if (decodeVapidPublicKeyBytes(vapidKey)) vapidPublicKeyRef.current = vapidKey;
     if (!vapidKey) {
       setPushStatusText("Push är inte konfigurerat på servern ännu (saknar VAPID-nyckel).");
       return;
