@@ -1,5 +1,6 @@
 import webpush from "web-push";
 import { getDb } from "@/lib/db";
+import { decodeVapidPublicKeyBytes, stripVapidPrivateKeyDecorators, stripVapidPublicKeyDecorators } from "@/lib/vapidPublicKey";
 import type { Role } from "@/lib/types";
 
 type PushSubInput = {
@@ -8,11 +9,11 @@ type PushSubInput = {
 };
 
 function configurePush(): boolean {
-  const pub = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
-  const priv = process.env.VAPID_PRIVATE_KEY;
-  const subject = process.env.VAPID_SUBJECT ?? "mailto:ops@example.com";
-  if (!pub || !priv) return false;
-  webpush.setVapidDetails(subject, pub, priv);
+  const pubRaw = stripVapidPublicKeyDecorators(process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY ?? "");
+  const priv = stripVapidPrivateKeyDecorators(process.env.VAPID_PRIVATE_KEY ?? "");
+  const subject = (process.env.VAPID_SUBJECT ?? "mailto:ops@example.com").trim();
+  if (!decodeVapidPublicKeyBytes(pubRaw) || !priv) return false;
+  webpush.setVapidDetails(subject, pubRaw, priv);
   return true;
 }
 

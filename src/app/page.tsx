@@ -11,6 +11,11 @@ import {
   googleDirectionsFromTo,
   googleDirectionsToDestination,
 } from "@/lib/mapsLinks";
+import {
+  applicationServerKeyBuffer,
+  decodeVapidPublicKeyBytes,
+  stripVapidPublicKeyDecorators,
+} from "@/lib/vapidPublicKey";
 import type { BusRoute, Drive, DriveType, Notification, Role, VehicleType } from "@/lib/types";
 
 type User = { id: string; role: Role };
@@ -34,17 +39,6 @@ function formatWhen(isoString: string): string {
     hour: "2-digit",
     minute: "2-digit",
   });
-}
-
-function urlBase64ToUint8Array(base64String: string): Uint8Array {
-  const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
-  const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
-  const rawData = window.atob(base64);
-  const outputArray = new Uint8Array(rawData.length);
-  for (let i = 0; i < rawData.length; i += 1) {
-    outputArray[i] = rawData.charCodeAt(i);
-  }
-  return outputArray;
 }
 
 export default function Home() {
@@ -189,8 +183,8 @@ export default function Home() {
     fetch("/api/push/public-key")
       .then((res) => res.json())
       .then((data) => {
-        const k = typeof data.publicKey === "string" ? data.publicKey.trim() : "";
-        vapidPublicKeyRef.current = k || null;
+        const k = typeof data.publicKey === "string" ? stripVapidPublicKeyDecorators(data.publicKey) : "";
+        vapidPublicKeyRef.current = decodeVapidPublicKeyBytes(k) ? k : null;
       })
       .catch(() => {
         vapidPublicKeyRef.current = null;
@@ -455,17 +449,25 @@ export default function Home() {
       }
     }
 
-    let vapidKey = vapidPublicKeyRef.current?.trim() ?? "";
+    let vapidKey = stripVapidPublicKeyDecorators(vapidPublicKeyRef.current ?? "");
     if (!vapidKey) {
       const vapidRes = await fetch("/api/push/public-key");
       const vapidData = (await vapidRes.json().catch(() => ({}))) as { publicKey?: string };
-      vapidKey = vapidData.publicKey?.trim() ?? "";
-      if (vapidKey) vapidPublicKeyRef.current = vapidKey;
+      vapidKey = stripVapidPublicKeyDecorators(vapidData.publicKey ?? "");
+      if (decodeVapidPublicKeyBytes(vapidKey)) vapidPublicKeyRef.current = vapidKey;
     }
     if (!vapidKey) {
       setPushStatusText("Push är inte konfigurerat på servern ännu (saknar VAPID-nyckel).");
       return;
     }
+    const decodedVapid = decodeVapidPublicKeyBytes(vapidKey);
+    if (!decodedVapid) {
+      setPushStatusText(
+        "VAPID-publiknyckeln är ogiltig. På servern i .env.production: sätt NEXT_PUBLIC_VAPID_PUBLIC_KEY till exakt publicKey från `npx web-push generate-vapid-keys` (en rad, inga citattecken). Den privata nyckeln ska stå i VAPID_PRIVATE_KEY — inte tvärtom.",
+      );
+      return;
+    }
+    const applicationServerKey = applicationServerKeyBuffer(decodedVapid);
     try {
       await navigator.serviceWorker.register("/sw.js");
       const reg = await navigator.serviceWorker.ready;
@@ -473,7 +475,7 @@ export default function Home() {
       if (!sub) {
         sub = await reg.pushManager.subscribe({
           userVisibleOnly: true,
-          applicationServerKey: urlBase64ToUint8Array(vapidKey) as BufferSource,
+          applicationServerKey,
         });
       }
       const raw = sub.toJSON() as {
