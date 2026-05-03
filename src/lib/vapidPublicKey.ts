@@ -4,20 +4,21 @@
  */
 
 export function stripVapidPublicKeyDecorators(raw: string): string {
-  let s = raw.trim();
+  let s = raw.trim().replace(/^\uFEFF/, "");
   if ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'"))) {
     s = s.slice(1, -1).trim();
   }
   const firstLine = (s.split(/\r?\n/)[0] ?? s).trim();
-  return firstLine.replace(/\s+/g, "");
+  // Spaces, BOM, zero-width chars (common when copying from PDF / Word)
+  return firstLine.replace(/\s+/g, "").replace(/[\uFEFF\u200B-\u200D]/g, "");
 }
 
 export function stripVapidPrivateKeyDecorators(raw: string): string {
-  let s = raw.trim();
+  let s = raw.trim().replace(/^\uFEFF/, "");
   if ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'"))) {
     s = s.slice(1, -1).trim();
   }
-  return s.replace(/\s+/g, "");
+  return s.replace(/\s+/g, "").replace(/[\uFEFF\u200B-\u200D]/g, "");
 }
 
 /** Decode URL-safe base64 VAPID public key; null if not a valid 65-byte uncompressed P-256 point. */

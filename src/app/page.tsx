@@ -180,7 +180,7 @@ export default function Home() {
   useEffect(() => {
     vapidPublicKeyRef.current = null;
     if (!token) return;
-    fetch("/api/push/public-key")
+    fetch("/api/push/public-key", { cache: "no-store" })
       .then((res) => res.json())
       .then((data) => {
         const k = typeof data.publicKey === "string" ? stripVapidPublicKeyDecorators(data.publicKey) : "";
@@ -449,9 +449,15 @@ export default function Home() {
       }
     }
 
-    let vapidKey = stripVapidPublicKeyDecorators(vapidPublicKeyRef.current ?? "");
+    // Prefer key baked in at `npm run build` (Next inlines NEXT_PUBLIC_*). Safari is picky;
+    // JSON/fetch can theoretically differ from bundle; Chrome often still works.
+    const buildKey = stripVapidPublicKeyDecorators(process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY ?? "");
+    let vapidKey = decodeVapidPublicKeyBytes(buildKey) ? buildKey : "";
     if (!vapidKey) {
-      const vapidRes = await fetch("/api/push/public-key");
+      vapidKey = stripVapidPublicKeyDecorators(vapidPublicKeyRef.current ?? "");
+    }
+    if (!vapidKey) {
+      const vapidRes = await fetch("/api/push/public-key", { cache: "no-store" });
       const vapidData = (await vapidRes.json().catch(() => ({}))) as { publicKey?: string };
       vapidKey = stripVapidPublicKeyDecorators(vapidData.publicKey ?? "");
       if (decodeVapidPublicKeyBytes(vapidKey)) vapidPublicKeyRef.current = vapidKey;
