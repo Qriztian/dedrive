@@ -472,35 +472,51 @@ export default function Home() {
       }
     }
 
-    // Same source as `curl …/public-key` (text/plain). Build-inlined NEXT_PUBLIC_* can be stale or
-    // behave oddly in WebKit after deploys; API is always current.
-    let vapidKey = "";
-    const vapidRes = await fetch("/api/push/public-key", {
-      cache: "no-store",
-      headers: { Accept: "text/plain" },
-    });
-    const text = vapidRes.ok ? await vapidRes.text().catch(() => "") : "";
-    vapidKey = stripVapidPublicKeyDecorators(text);
-    if (!decodeVapidPublicKeyBytes(vapidKey)) {
-      vapidKey = stripVapidPublicKeyDecorators(vapidPublicKeyRef.current ?? "");
+    // Prefer raw 65-byte key (no base64 in browser) — avoids Safari/atob edge cases vs same bytes as server.
+    let keyBuf: ArrayBuffer | null = null;
+    const binRes = await fetch("/api/push/public-key-binary", { cache: "no-store" });
+    if (binRes.ok) {
+      const ab = await binRes.arrayBuffer().catch(() => null);
+      if (ab && ab.byteLength === 65) {
+        const u = new Uint8Array(ab);
+        if (u[0] === 0x04) {
+          keyBuf = applicationServerKeyBuffer(u);
+        }
+      }
     }
-    if (!decodeVapidPublicKeyBytes(vapidKey)) {
-      const buildKey = stripVapidPublicKeyDecorators(process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY ?? "");
-      if (decodeVapidPublicKeyBytes(buildKey)) vapidKey = buildKey;
+    if (!keyBuf) {
+      let vapidKey = "";
+      const vapidRes = await fetch("/api/push/public-key", {
+        cache: "no-store",
+        headers: { Accept: "text/plain" },
+      });
+      const text = vapidRes.ok ? await vapidRes.text().catch(() => "") : "";
+      vapidKey = stripVapidPublicKeyDecorators(text);
+      if (!decodeVapidPublicKeyBytes(vapidKey)) {
+        vapidKey = stripVapidPublicKeyDecorators(vapidPublicKeyRef.current ?? "");
+      }
+      if (!decodeVapidPublicKeyBytes(vapidKey)) {
+        const buildKey = stripVapidPublicKeyDecorators(process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY ?? "");
+        if (decodeVapidPublicKeyBytes(buildKey)) vapidKey = buildKey;
+      }
+      if (decodeVapidPublicKeyBytes(vapidKey)) vapidPublicKeyRef.current = vapidKey;
+      if (!vapidKey) {
+        setPushStatusText("Push är inte konfigurerat på servern ännu (saknar VAPID-nyckel).");
+        return;
+      }
+      const decodedVapid = decodeVapidPublicKeyBytes(vapidKey);
+      if (!decodedVapid) {
+        setPushStatusText(
+          "VAPID-publiknyckeln är ogiltig. På servern i .env.production: sätt NEXT_PUBLIC_VAPID_PUBLIC_KEY till exakt publicKey från `npx web-push generate-vapid-keys` (en rad, inga citattecken). Den privata nyckeln ska stå i VAPID_PRIVATE_KEY — inte tvärtom.",
+        );
+        return;
+      }
+      keyBuf = applicationServerKeyBuffer(decodedVapid);
     }
-    if (decodeVapidPublicKeyBytes(vapidKey)) vapidPublicKeyRef.current = vapidKey;
-    if (!vapidKey) {
-      setPushStatusText("Push är inte konfigurerat på servern ännu (saknar VAPID-nyckel).");
+    if (!keyBuf) {
+      setPushStatusText("Kunde inte ladda VAPID-nyckel från servern.");
       return;
     }
-    const decodedVapid = decodeVapidPublicKeyBytes(vapidKey);
-    if (!decodedVapid) {
-      setPushStatusText(
-        "VAPID-publiknyckeln är ogiltig. På servern i .env.production: sätt NEXT_PUBLIC_VAPID_PUBLIC_KEY till exakt publicKey från `npx web-push generate-vapid-keys` (en rad, inga citattecken). Den privata nyckeln ska stå i VAPID_PRIVATE_KEY — inte tvärtom.",
-      );
-      return;
-    }
-    const keyBuf = applicationServerKeyBuffer(decodedVapid);
     try {
       await navigator.serviceWorker.register("/sw.js", { scope: "/" });
       await navigator.serviceWorker.ready;
