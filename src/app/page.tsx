@@ -90,6 +90,8 @@ export default function Home() {
   const [pushEnabled, setPushEnabled] = useState(false);
   const [pushStatusText, setPushStatusText] = useState<string | null>(null);
   const [health, setHealth] = useState<HealthInfo | null>(null);
+  /** Prefetched so the push button does not await network before permission (iOS/Safari). */
+  const vapidPublicKeyRef = useRef<string | null>(null);
   const pullStartYRef = useRef<number | null>(null);
   const pullTriggeredRef = useRef(false);
   const isRefreshingRef = useRef(false);
@@ -182,6 +184,20 @@ export default function Home() {
   }, [token]);
 
   useEffect(() => {
+    vapidPublicKeyRef.current = null;
+    if (!token) return;
+    fetch("/api/push/public-key")
+      .then((res) => res.json())
+      .then((data) => {
+        const k = typeof data.publicKey === "string" ? data.publicKey.trim() : "";
+        vapidPublicKeyRef.current = k || null;
+      })
+      .catch(() => {
+        vapidPublicKeyRef.current = null;
+      });
+  }, [token]);
+
+  useEffect(() => {
     if (!token) {
       const t0 = setTimeout(() => setPushEnabled(false), 0);
       return () => clearTimeout(t0);
@@ -190,10 +206,15 @@ export default function Home() {
       return;
     }
     if (!("serviceWorker" in navigator)) return;
-    navigator.serviceWorker.ready
-      .then((reg) => reg.pushManager.getSubscription())
-      .then((sub) => setPushEnabled(Boolean(sub)))
-      .catch(() => undefined);
+    navigator.serviceWorker
+      .register("/sw.js")
+      .catch(() => undefined)
+      .finally(() => {
+        navigator.serviceWorker.ready
+          .then((reg) => reg.pushManager.getSubscription())
+          .then((sub) => setPushEnabled(Boolean(sub)))
+          .catch(() => undefined);
+      });
   }, [token]);
 
   useEffect(() => {
@@ -419,26 +440,52 @@ export default function Home() {
       setPushStatusText("Push stöds inte i den här webbläsaren.");
       return;
     }
-    const vapidRes = await fetch("/api/push/public-key");
-    const vapidData = (await vapidRes.json().catch(() => ({}))) as { publicKey?: string };
-    const vapidKey = vapidData.publicKey?.trim() ?? "";
+    if (Notification.permission === "denied") {
+      setPushStatusText(
+        "Notiser är blockerade. På iPhone: Inställningar → Notiser → (den här appen) och slå på.",
+      );
+      return;
+    }
+    // Safari/iOS: requestPermission must not follow unrelated awaits (e.g. fetch), or activation breaks.
+    if (Notification.permission === "default") {
+      const permission = await Notification.requestPermission();
+      if (permission !== "granted") {
+        setPushStatusText("Notiser är inte tillåtna i webbläsaren.");
+        return;
+      }
+    }
+
+    let vapidKey = vapidPublicKeyRef.current?.trim() ?? "";
+    if (!vapidKey) {
+      const vapidRes = await fetch("/api/push/public-key");
+      const vapidData = (await vapidRes.json().catch(() => ({}))) as { publicKey?: string };
+      vapidKey = vapidData.publicKey?.trim() ?? "";
+      if (vapidKey) vapidPublicKeyRef.current = vapidKey;
+    }
     if (!vapidKey) {
       setPushStatusText("Push är inte konfigurerat på servern ännu (saknar VAPID-nyckel).");
       return;
     }
     try {
-      const reg = await navigator.serviceWorker.register("/sw.js");
+      await navigator.serviceWorker.register("/sw.js");
+      const reg = await navigator.serviceWorker.ready;
       let sub = await reg.pushManager.getSubscription();
       if (!sub) {
-        const permission = await Notification.requestPermission();
-        if (permission !== "granted") {
-          setPushStatusText("Notiser är inte tillåtna i webbläsaren.");
-          return;
-        }
         sub = await reg.pushManager.subscribe({
           userVisibleOnly: true,
           applicationServerKey: urlBase64ToUint8Array(vapidKey) as BufferSource,
         });
+      }
+      const raw = sub.toJSON() as {
+        endpoint?: string;
+        keys?: { p256dh?: string; auth?: string };
+      };
+      const endpoint = raw.endpoint?.trim() ?? "";
+      const p256dh = raw.keys?.p256dh?.trim() ?? "";
+      const auth = raw.keys?.auth?.trim() ?? "";
+      if (!endpoint || !p256dh || !auth) {
+        setPushStatusText("Kunde inte läsa push-prenumerationen. Stäng appen och försök igen.");
+        return;
       }
       const response = await fetch("/api/push/subscribe", {
         method: "POST",
@@ -446,13 +493,18 @@ export default function Home() {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify(sub.toJSON()),
+        body: JSON.stringify({ endpoint, keys: { p256dh, auth } }),
       });
-      if (!response.ok) throw new Error("subscribe failed");
+      if (!response.ok) {
+        const err = (await response.json().catch(() => ({}))) as { error?: string };
+        throw new Error(err.error ?? `Serverfel (${response.status}).`);
+      }
       setPushEnabled(true);
       setPushStatusText("Push-notiser är aktiverade.");
-    } catch {
-      setPushStatusText("Kunde inte aktivera push-notiser.");
+    } catch (e) {
+      setPushStatusText(
+        e instanceof Error ? `Kunde inte aktivera: ${e.message}` : "Kunde inte aktivera push-notiser.",
+      );
     }
   }
 
