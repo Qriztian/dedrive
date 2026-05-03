@@ -560,6 +560,14 @@ export default function Home() {
         return;
       }
     }
+
+    const txtKeyRes = await fetch("/api/push/public-key", {
+      cache: "no-store",
+      headers: { Accept: "text/plain" },
+    });
+    const vapidKeyPlain = stripVapidPublicKeyDecorators(
+      txtKeyRes.ok ? await txtKeyRes.text().catch(() => "") : "",
+    );
     try {
       await navigator.serviceWorker.register("/sw.js", { scope: "/" });
       await navigator.serviceWorker.ready;
@@ -573,14 +581,19 @@ export default function Home() {
       }
       let sub = await reg.pushManager.getSubscription();
       if (!sub) {
-        // WebKit often prefers Uint8Array over raw ArrayBuffer for subscribe().
-        const attempts: BufferSource[] = [new Uint8Array(keyBuf), keyBuf];
+        // Push spec: applicationServerKey may be BufferSource OR base64url string. WebKit often
+        // accepts the string form; typed arrays from binary fetch can still be rejected.
+        const attempts: Array<BufferSource | string> = [];
+        if (isLikelyAppleSafari() && decodeVapidPublicKeyBytes(vapidKeyPlain)) {
+          attempts.push(vapidKeyPlain);
+        }
+        attempts.push(new Uint8Array(keyBuf), keyBuf);
         let lastErr: unknown;
         for (const applicationServerKey of attempts) {
           try {
             sub = await reg.pushManager.subscribe({
               userVisibleOnly: true,
-              applicationServerKey,
+              applicationServerKey: applicationServerKey as BufferSource,
             });
             break;
           } catch (err) {
