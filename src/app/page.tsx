@@ -467,16 +467,29 @@ export default function Home() {
       );
       return;
     }
-    const applicationServerKey = applicationServerKeyBuffer(decodedVapid);
+    const keyBuf = applicationServerKeyBuffer(decodedVapid);
     try {
       await navigator.serviceWorker.register("/sw.js");
       const reg = await navigator.serviceWorker.ready;
       let sub = await reg.pushManager.getSubscription();
       if (!sub) {
-        sub = await reg.pushManager.subscribe({
-          userVisibleOnly: true,
-          applicationServerKey,
-        });
+        // WebKit (Safari) vs Chromium differ on BufferSource: try Uint8Array then raw ArrayBuffer.
+        const attempts: BufferSource[] = [new Uint8Array(keyBuf), keyBuf];
+        let lastErr: unknown;
+        for (const applicationServerKey of attempts) {
+          try {
+            sub = await reg.pushManager.subscribe({
+              userVisibleOnly: true,
+              applicationServerKey,
+            });
+            break;
+          } catch (err) {
+            lastErr = err;
+          }
+        }
+        if (!sub) {
+          throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+        }
       }
       const raw = sub.toJSON() as {
         endpoint?: string;
