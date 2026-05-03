@@ -41,6 +41,26 @@ function formatWhen(isoString: string): string {
   });
 }
 
+/** Safari often needs an active controller before pushManager.subscribe succeeds. */
+function waitForServiceWorkerController(timeoutMs: number): Promise<void> {
+  if (typeof navigator === "undefined" || !("serviceWorker" in navigator)) {
+    return Promise.resolve();
+  }
+  if (navigator.serviceWorker.controller) return Promise.resolve();
+  return Promise.race([
+    new Promise<void>((resolve) => {
+      navigator.serviceWorker.addEventListener(
+        "controllerchange",
+        () => resolve(),
+        { once: true },
+      );
+    }),
+    new Promise<void>((resolve) => {
+      setTimeout(resolve, timeoutMs);
+    }),
+  ]);
+}
+
 export default function Home() {
   const [token, setToken] = useState(() => {
     if (typeof window === "undefined") return "";
@@ -180,10 +200,13 @@ export default function Home() {
   useEffect(() => {
     vapidPublicKeyRef.current = null;
     if (!token) return;
-    fetch("/api/push/public-key", { cache: "no-store" })
-      .then((res) => res.json())
-      .then((data) => {
-        const k = typeof data.publicKey === "string" ? stripVapidPublicKeyDecorators(data.publicKey) : "";
+    fetch("/api/push/public-key", {
+      cache: "no-store",
+      headers: { Accept: "text/plain" },
+    })
+      .then((res) => (res.ok ? res.text() : ""))
+      .then((text) => {
+        const k = stripVapidPublicKeyDecorators(text);
         vapidPublicKeyRef.current = decodeVapidPublicKeyBytes(k) ? k : null;
       })
       .catch(() => {
@@ -201,7 +224,7 @@ export default function Home() {
     }
     if (!("serviceWorker" in navigator)) return;
     navigator.serviceWorker
-      .register("/sw.js")
+      .register("/sw.js", { scope: "/" })
       .catch(() => undefined)
       .finally(() => {
         navigator.serviceWorker.ready
@@ -457,9 +480,12 @@ export default function Home() {
       vapidKey = stripVapidPublicKeyDecorators(vapidPublicKeyRef.current ?? "");
     }
     if (!vapidKey) {
-      const vapidRes = await fetch("/api/push/public-key", { cache: "no-store" });
-      const vapidData = (await vapidRes.json().catch(() => ({}))) as { publicKey?: string };
-      vapidKey = stripVapidPublicKeyDecorators(vapidData.publicKey ?? "");
+      const vapidRes = await fetch("/api/push/public-key", {
+        cache: "no-store",
+        headers: { Accept: "text/plain" },
+      });
+      const text = vapidRes.ok ? await vapidRes.text().catch(() => "") : "";
+      vapidKey = stripVapidPublicKeyDecorators(text);
       if (decodeVapidPublicKeyBytes(vapidKey)) vapidPublicKeyRef.current = vapidKey;
     }
     if (!vapidKey) {
@@ -475,12 +501,14 @@ export default function Home() {
     }
     const keyBuf = applicationServerKeyBuffer(decodedVapid);
     try {
-      await navigator.serviceWorker.register("/sw.js");
+      await navigator.serviceWorker.register("/sw.js", { scope: "/" });
+      await navigator.serviceWorker.ready;
+      await waitForServiceWorkerController(8000);
       const reg = await navigator.serviceWorker.ready;
       let sub = await reg.pushManager.getSubscription();
       if (!sub) {
-        // WebKit (Safari) vs Chromium differ on BufferSource: try Uint8Array then raw ArrayBuffer.
-        const attempts: BufferSource[] = [new Uint8Array(keyBuf), keyBuf];
+        // WebKit: try standalone ArrayBuffer first, then Uint8Array (Chromium accepts both).
+        const attempts: BufferSource[] = [keyBuf, new Uint8Array(keyBuf)];
         let lastErr: unknown;
         for (const applicationServerKey of attempts) {
           try {
