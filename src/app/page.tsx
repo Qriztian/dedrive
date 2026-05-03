@@ -61,6 +61,22 @@ function waitForServiceWorkerController(timeoutMs: number): Promise<void> {
   ]);
 }
 
+/** Same check as server: if this fails in Safari, bytes were corrupted or wrong before subscribe(). */
+async function validateP256PublicRawInBrowser(buf: ArrayBuffer): Promise<boolean> {
+  try {
+    await crypto.subtle.importKey(
+      "raw",
+      new Uint8Array(buf),
+      { name: "ECDSA", namedCurve: "P-256" },
+      true,
+      ["verify"],
+    );
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export default function Home() {
   const [token, setToken] = useState(() => {
     if (typeof window === "undefined") return "";
@@ -519,6 +535,14 @@ export default function Home() {
       setPushStatusText("Kunde inte ladda VAPID-nyckel från servern.");
       return;
     }
+    const curveOk = await validateP256PublicRawInBrowser(keyBuf);
+    if (!curveOk) {
+      const peek = new Uint8Array(keyBuf);
+      setPushStatusText(
+        `Nyckeln som nådde webbläsaren är inte en giltig P-256-nyckel (längd ${peek.byteLength}, första byte ${peek[0]}). Om servern ändå svarar med 65 byte i curl kan det vara proxy/cache — prova annat nät/VPN eller rensa webbplatsdata igen.`,
+      );
+      return;
+    }
     try {
       await navigator.serviceWorker.register("/sw.js", { scope: "/" });
       await navigator.serviceWorker.ready;
@@ -532,8 +556,8 @@ export default function Home() {
       }
       let sub = await reg.pushManager.getSubscription();
       if (!sub) {
-        // WebKit: try standalone ArrayBuffer first, then Uint8Array (Chromium accepts both).
-        const attempts: BufferSource[] = [keyBuf, new Uint8Array(keyBuf)];
+        // WebKit often prefers Uint8Array over raw ArrayBuffer for subscribe().
+        const attempts: BufferSource[] = [new Uint8Array(keyBuf), keyBuf];
         let lastErr: unknown;
         for (const applicationServerKey of attempts) {
           try {
