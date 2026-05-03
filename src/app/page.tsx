@@ -61,20 +61,35 @@ function waitForServiceWorkerController(timeoutMs: number): Promise<void> {
   ]);
 }
 
-/** Same check as server: if this fails in Safari, bytes were corrupted or wrong before subscribe(). */
+/** Chromium: rejects truly bad keys. Safari often fails importKey(ECDSA) on valid VAPID raw points — do not block subscribe there. */
+function isLikelyAppleSafari(): boolean {
+  if (typeof navigator === "undefined") return false;
+  const ua = navigator.userAgent;
+  const isChromium = /Chrome|Chromium|CriOS|Edg|OPR|FxiOS/.test(ua);
+  return /Safari/i.test(ua) && !isChromium;
+}
+
 async function validateP256PublicRawInBrowser(buf: ArrayBuffer): Promise<boolean> {
-  try {
-    await crypto.subtle.importKey(
-      "raw",
-      new Uint8Array(buf),
-      { name: "ECDSA", namedCurve: "P-256" },
-      true,
-      ["verify"],
-    );
-    return true;
-  } catch {
-    return false;
+  const u8 = new Uint8Array(buf);
+  const algos: Array<{ name: "ECDSA" | "ECDH"; usages: KeyUsage[] }> = [
+    { name: "ECDSA", usages: ["verify"] },
+    { name: "ECDH", usages: [] },
+  ];
+  for (const { name, usages } of algos) {
+    try {
+      await crypto.subtle.importKey(
+        "raw",
+        u8,
+        { name, namedCurve: "P-256" },
+        true,
+        usages,
+      );
+      return true;
+    } catch {
+      // try next
+    }
   }
+  return false;
 }
 
 export default function Home() {
@@ -535,13 +550,15 @@ export default function Home() {
       setPushStatusText("Kunde inte ladda VAPID-nyckel från servern.");
       return;
     }
-    const curveOk = await validateP256PublicRawInBrowser(keyBuf);
-    if (!curveOk) {
-      const peek = new Uint8Array(keyBuf);
-      setPushStatusText(
-        `Nyckeln som nådde webbläsaren är inte en giltig P-256-nyckel (längd ${peek.byteLength}, första byte ${peek[0]}). Om servern ändå svarar med 65 byte i curl kan det vara proxy/cache — prova annat nät/VPN eller rensa webbplatsdata igen.`,
-      );
-      return;
+    if (!isLikelyAppleSafari()) {
+      const curveOk = await validateP256PublicRawInBrowser(keyBuf);
+      if (!curveOk) {
+        const peek = new Uint8Array(keyBuf);
+        setPushStatusText(
+          `Nyckeln som nådde webbläsaren är inte en giltig P-256-nyckel (längd ${peek.byteLength}, första byte ${peek[0]}). Generera nytt par med npx web-push generate-vapid-keys och uppdatera .env.production.`,
+        );
+        return;
+      }
     }
     try {
       await navigator.serviceWorker.register("/sw.js", { scope: "/" });
