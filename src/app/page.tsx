@@ -474,7 +474,9 @@ export default function Home() {
 
     // Prefer raw 65-byte key (no base64 in browser) — avoids Safari/atob edge cases vs same bytes as server.
     let keyBuf: ArrayBuffer | null = null;
-    const binRes = await fetch("/api/push/public-key-binary", { cache: "no-store" });
+    const binRes = await fetch(`/api/push/public-key-binary?t=${Date.now()}`, {
+      cache: "no-store",
+    });
     if (binRes.ok) {
       const ab = await binRes.arrayBuffer().catch(() => null);
       if (ab && ab.byteLength === 65) {
@@ -522,6 +524,12 @@ export default function Home() {
       await navigator.serviceWorker.ready;
       await waitForServiceWorkerController(8000);
       const reg = await navigator.serviceWorker.ready;
+      try {
+        const oldSub = await reg.pushManager.getSubscription();
+        if (oldSub) await oldSub.unsubscribe();
+      } catch {
+        // ignore — fresh subscribe below
+      }
       let sub = await reg.pushManager.getSubscription();
       if (!sub) {
         // WebKit: try standalone ArrayBuffer first, then Uint8Array (Chromium accepts both).
