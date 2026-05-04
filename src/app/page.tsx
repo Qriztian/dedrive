@@ -589,6 +589,7 @@ export default function Home() {
         }
         attempts.push(new Uint8Array(keyBuf), keyBuf);
         let lastErr: unknown;
+        const attemptErrors: string[] = [];
         for (const applicationServerKey of attempts) {
           try {
             sub = await reg.pushManager.subscribe({
@@ -598,9 +599,18 @@ export default function Home() {
             break;
           } catch (err) {
             lastErr = err;
+            const kind =
+              typeof applicationServerKey === "string"
+                ? "string"
+                : applicationServerKey instanceof Uint8Array
+                  ? "Uint8Array"
+                  : "ArrayBuffer";
+            const msg = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+            attemptErrors.push(`${kind}: ${msg}`);
           }
         }
         if (!sub) {
+          setPushStatusText(`Kunde inte aktivera push. Försök: ${attemptErrors.join(" | ")}`);
           throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
         }
       }
