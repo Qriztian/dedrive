@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { decodeVapidPublicKeyBytes, stripVapidPublicKeyDecorators } from "@/lib/vapidPublicKey";
+import { isAcceptedP256PublicRaw } from "@/lib/validateServerVapidRaw";
 
 function readNextPublicVapidFromDisk(): string {
   try {
@@ -27,4 +28,21 @@ export function resolveVapidPublicKeyTrimmed(): string {
 /** 65-byte uncompressed P-256 public key, or null. */
 export function resolveVapidPublicP256Raw(): Uint8Array | null {
   return decodeVapidPublicKeyBytes(resolveVapidPublicKeyTrimmed());
+}
+
+/** Like resolveVapidPublicP256Raw but rejects points Node Web Crypto won't import (invalid curve coords). */
+export async function resolveVapidPublicP256RawValidated(): Promise<Uint8Array | null> {
+  const raw = resolveVapidPublicP256Raw();
+  if (!raw) return null;
+  if (!(await isAcceptedP256PublicRaw(raw))) return null;
+  return raw;
+}
+
+/** Base64url public key string only if the decoded point passes server-side curve validation. */
+export async function resolveVapidPublicKeyTrimmedValidated(): Promise<string | null> {
+  const trimmed = resolveVapidPublicKeyTrimmed();
+  const raw = decodeVapidPublicKeyBytes(trimmed);
+  if (!raw) return null;
+  if (!(await isAcceptedP256PublicRaw(raw))) return null;
+  return trimmed;
 }

@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
-import { resolveVapidPublicP256Raw } from "@/lib/serverVapidPublicKey";
+import { resolveVapidPublicP256RawValidated } from "@/lib/serverVapidPublicKey";
 
 /** Raw 65-byte uncompressed P-256 VAPID public key (no base64). Safari-friendly. */
 export async function GET() {
-  const raw = resolveVapidPublicP256Raw();
+  const raw = await resolveVapidPublicP256RawValidated();
   if (!raw) {
     return new NextResponse(null, {
       status: 404,

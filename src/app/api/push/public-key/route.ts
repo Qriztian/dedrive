@@ -1,11 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { decodeVapidPublicKeyBytes } from "@/lib/vapidPublicKey";
-import { resolveVapidPublicKeyTrimmed } from "@/lib/serverVapidPublicKey";
+import { resolveVapidPublicKeyTrimmedValidated } from "@/lib/serverVapidPublicKey";
 
 export async function GET(request: NextRequest) {
-  const trimmed = resolveVapidPublicKeyTrimmed();
-  const bytes = decodeVapidPublicKeyBytes(trimmed);
-  const publicKey = bytes ? trimmed : "";
+  const publicKey = (await resolveVapidPublicKeyTrimmedValidated()) ?? "";
 
   const accept = request.headers.get("accept") ?? "";
   if (accept.includes("text/plain")) {
