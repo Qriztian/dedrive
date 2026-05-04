@@ -609,9 +609,15 @@ export default function Home() {
             attemptErrors.push(`${kind}: ${msg}`);
           }
         }
-        if (!sub) {
-          setPushStatusText(`Kunde inte aktivera push. Försök: ${attemptErrors.join(" | ")}`);
-          throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+      if (!sub) {
+          const details = attemptErrors.join(" | ");
+          throw new Error(
+            details
+              ? `Kunde inte aktivera push. Försök: ${details}`
+              : lastErr instanceof Error
+                ? lastErr.message
+                : String(lastErr),
+          );
         }
       }
       const raw = sub.toJSON() as {
@@ -640,9 +646,9 @@ export default function Home() {
       setPushEnabled(true);
       setPushStatusText("Push-notiser är aktiverade.");
     } catch (e) {
-      setPushStatusText(
-        e instanceof Error ? `Kunde inte aktivera: ${e.message}` : "Kunde inte aktivera push-notiser.",
-      );
+      const msg = e instanceof Error ? e.message : "Kunde inte aktivera push-notiser.";
+      // Avoid double-prefix if error already contains a full user-facing sentence.
+      setPushStatusText(msg.startsWith("Kunde inte aktivera") ? msg : `Kunde inte aktivera: ${msg}`);
     }
   }
 
